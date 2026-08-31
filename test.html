@@ -26,14 +26,14 @@
 <body>
   <h2>🩺 SwasthyaSathi</h2>
   <p class="tagline">Voice-first protocol navigation for last-mile health workers</p>
-  <p>Hold the button, describe a case out loud, release to send.</p>
+  <p>Click to start recording, describe a case out loud, click again to stop and send.</p>
 
   <label>
     Backend URL
     <input id="backendUrl" style="width:100%; padding:6px;" value="http://localhost:8000" />
   </label>
 
-  <p><button id="recordBtn">Hold to Speak</button></p>
+  <p><button id="recordBtn">🎙️ Start Recording</button></p>
   <div id="status">Idle.</div>
 
   <div id="resultCard" class="card" style="display:none;">
@@ -76,6 +76,8 @@ const urgencyClassMap = {
   "Refer immediately": "immediately",
 };
 
+let isRecording = false;
+
 async function startRecording() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   mediaRecorder = new MediaRecorder(stream);
@@ -83,17 +85,20 @@ async function startRecording() {
   mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
   mediaRecorder.onstop = sendAudio;
   mediaRecorder.start();
+  isRecording = true;
   recordBtn.classList.add("recording");
-  recordBtn.textContent = "Recording... release to send";
-  statusEl.textContent = "Listening...";
+  recordBtn.textContent = "⏹️ Stop Recording";
+  statusEl.textContent = "Listening... speak now.";
 }
 
 function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach((t) => t.stop());
   }
+  isRecording = false;
   recordBtn.classList.remove("recording");
-  recordBtn.textContent = "Hold to Speak";
+  recordBtn.textContent = "🎙️ Start Recording";
 }
 
 async function sendAudio() {
@@ -151,13 +156,13 @@ async function sendAudio() {
   }
 }
 
-recordBtn.addEventListener("mousedown", startRecording);
-recordBtn.addEventListener("mouseup", stopRecording);
-recordBtn.addEventListener("mouseleave", () => {
-  if (mediaRecorder && mediaRecorder.state === "recording") stopRecording();
+recordBtn.addEventListener("click", () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
 });
-recordBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); });
-recordBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopRecording(); });
 </script>
 </body>
 </html>

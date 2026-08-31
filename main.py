@@ -25,8 +25,8 @@ from retriever import retrieve_protocol
 load_dotenv()
 
 SARVAM_API_KEY = os.environ["SARVAM_API_KEY"]
-CHAT_MODEL = os.environ.get("SARVAM_CHAT_MODEL", "sarvam-30b")
-TTS_SPEAKER = os.environ.get("TTS_SPEAKER", "anushka")
+CHAT_MODEL = os.environ.get("SARVAM_CHAT_MODEL", "sarvam-105b-conversations")
+TTS_SPEAKER = os.environ.get("TTS_SPEAKER", "shubh")
 TTS_LANGUAGE_CODE = os.environ.get("TTS_LANGUAGE_CODE", "hi-IN")
 
 client = SarvamAI(api_subscription_key=SARVAM_API_KEY)
@@ -98,15 +98,26 @@ async def query(audio: UploadFile = File(...)):
 
     try:
         # 2. Speech-to-text (Saaras v3, auto language detection, same-language transcript)
+        audio_size_bytes = os.path.getsize(tmp_path)
+        print(f"[DEBUG] Received audio file: {audio_size_bytes} bytes, saved at {tmp_path}")
+
         with open(tmp_path, "rb") as f:
             stt_response = client.speech_to_text.transcribe(
                 file=f,
                 model="saaras:v3",
                 mode="transcribe",
             )
+        print(f"[DEBUG] Raw Saaras response: {stt_response}")
+
         transcript = stt_response.transcript
         if not transcript or not transcript.strip():
-            raise HTTPException(status_code=422, detail="Could not transcribe audio.")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Could not transcribe audio. Try holding the record button "
+                    "longer and speaking clearly right after it starts."
+                ),
+            )
 
         # 3. Retrieve the closest matching approved protocol from Pinecone
         matches = retrieve_protocol(transcript, top_k=1)
@@ -125,8 +136,22 @@ async def query(audio: UploadFile = File(...)):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
+            max_tokens=1500,
+            temperature=0.2,
         )
-        raw_content = chat_response.choices[0].message.content.strip()
+        print(f"[DEBUG] Raw chat response: {chat_response}")
+
+        raw_content = chat_response.choices[0].message.content
+        if not raw_content or not raw_content.strip():
+            finish_reason = getattr(chat_response.choices[0], "finish_reason", "unknown")
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Chat model returned no content (finish_reason={finish_reason}). "
+                    "Check backend logs for the full response."
+                ),
+            )
+        raw_content = raw_content.strip()
 
         try:
             # Model may wrap JSON in a code fence despite instructions -- strip it if so.
