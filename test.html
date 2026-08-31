@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>SwasthyaSathi — Test Page</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 600px; margin: 50px auto; padding: 0 20px; }
+  h2 { margin-bottom: 2px; }
+  .tagline { color: #666; font-size: 14px; margin-top: 0; margin-bottom: 24px; }
+  button { font-size: 16px; padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; }
+  #recordBtn { background: #d32f2f; color: white; }
+  #recordBtn.recording { background: #616161; }
+  #status { margin-top: 16px; color: #555; }
+  .card { margin-top: 16px; padding: 14px 16px; border-radius: 8px; background: #f4f4f4; }
+  .urgency { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; color: white; }
+  .urgency.routine { background: #43a047; }
+  .urgency.monitor { background: #fb8c00; }
+  .urgency.soon { background: #e53935; }
+  .urgency.immediately { background: #b71c1c; }
+  .label { font-size: 12px; text-transform: uppercase; color: #888; margin-top: 10px; }
+  .value { margin-top: 2px; }
+  .source { font-size: 12px; color: #777; font-style: italic; margin-top: 4px; }
+  label { display: block; margin-top: 16px; font-size: 14px; color: #333; }
+</style>
+</head>
+<body>
+  <h2>🩺 SwasthyaSathi</h2>
+  <p class="tagline">Voice-first protocol navigation for last-mile health workers</p>
+  <p>Hold the button, describe a case out loud, release to send.</p>
+
+  <label>
+    Backend URL
+    <input id="backendUrl" style="width:100%; padding:6px;" value="http://localhost:8000" />
+  </label>
+
+  <p><button id="recordBtn">Hold to Speak</button></p>
+  <div id="status">Idle.</div>
+
+  <div id="resultCard" class="card" style="display:none;">
+    <span id="urgencyBadge" class="urgency"></span>
+    <div class="label">You said</div>
+    <div id="transcriptVal" class="value"></div>
+
+    <div class="label">Matched protocol</div>
+    <div id="protocolVal" class="value"></div>
+    <div id="sourceVal" class="source"></div>
+
+    <div class="label">Guidance</div>
+    <div id="guidanceVal" class="value"></div>
+
+    <div class="label">Reason</div>
+    <div id="reasonVal" class="value"></div>
+
+    <div id="questionsWrap" style="display:none;">
+      <div class="label">Follow-up questions</div>
+      <ul id="questionsVal" class="value"></ul>
+    </div>
+  </div>
+
+  <audio id="player" controls style="display:none; margin-top: 16px; width: 100%;"></audio>
+
+<script>
+let mediaRecorder;
+let chunks = [];
+
+const recordBtn = document.getElementById("recordBtn");
+const statusEl = document.getElementById("status");
+const resultCard = document.getElementById("resultCard");
+const urgencyBadge = document.getElementById("urgencyBadge");
+const player = document.getElementById("player");
+
+const urgencyClassMap = {
+  "Routine": "routine",
+  "Monitor at home": "monitor",
+  "Refer soon": "soon",
+  "Refer immediately": "immediately",
+};
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  chunks = [];
+  mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+  mediaRecorder.onstop = sendAudio;
+  mediaRecorder.start();
+  recordBtn.classList.add("recording");
+  recordBtn.textContent = "Recording... release to send";
+  statusEl.textContent = "Listening...";
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+  recordBtn.classList.remove("recording");
+  recordBtn.textContent = "Hold to Speak";
+}
+
+async function sendAudio() {
+  statusEl.textContent = "Processing... (transcribing, matching protocol, generating guidance)";
+  resultCard.style.display = "none";
+  player.style.display = "none";
+
+  const blob = new Blob(chunks, { type: "audio/webm" });
+  const formData = new FormData();
+  formData.append("audio", blob, "recording.webm");
+
+  const backendUrl = document.getElementById("backendUrl").value.replace(/\/$/, "");
+
+  try {
+    const res = await fetch(`${backendUrl}/query`, { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Request failed (${res.status})`);
+    }
+    const data = await res.json();
+
+    urgencyBadge.textContent = data.urgency;
+    urgencyBadge.className = "urgency " + (urgencyClassMap[data.urgency] || "soon");
+
+    document.getElementById("transcriptVal").textContent = data.transcript;
+    document.getElementById("protocolVal").textContent =
+      `${data.protocol_title} (match confidence: ${(data.match_score * 100).toFixed(0)}%)`;
+    document.getElementById("sourceVal").textContent = "Source: " + data.protocol_source;
+    document.getElementById("guidanceVal").textContent = data.guidance;
+    document.getElementById("reasonVal").textContent = data.reason;
+
+    const questionsWrap = document.getElementById("questionsWrap");
+    const questionsVal = document.getElementById("questionsVal");
+    questionsVal.innerHTML = "";
+    if (data.questions && data.questions.length > 0) {
+      data.questions.forEach((q) => {
+        const li = document.createElement("li");
+        li.textContent = q;
+        questionsVal.appendChild(li);
+      });
+      questionsWrap.style.display = "block";
+    } else {
+      questionsWrap.style.display = "none";
+    }
+
+    resultCard.style.display = "block";
+
+    player.src = "data:audio/wav;base64," + data.audio_base64;
+    player.style.display = "block";
+    player.play();
+
+    statusEl.textContent = "Done.";
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+recordBtn.addEventListener("mousedown", startRecording);
+recordBtn.addEventListener("mouseup", stopRecording);
+recordBtn.addEventListener("mouseleave", () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") stopRecording();
+});
+recordBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); });
+recordBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopRecording(); });
+</script>
+</body>
+</html>
